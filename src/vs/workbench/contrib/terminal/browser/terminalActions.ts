@@ -929,7 +929,7 @@ export function registerTerminalActions() {
 		id: TerminalCommandId.SendSequence,
 		title: terminalStrings.sendSequence,
 		f1: false,
-		description: {
+		metadata: {
 			description: terminalStrings.sendSequence.value,
 			args: [{
 				name: 'args',
@@ -951,7 +951,7 @@ export function registerTerminalActions() {
 	registerTerminalAction({
 		id: TerminalCommandId.NewWithCwd,
 		title: terminalStrings.newWithCwd,
-		description: {
+		metadata: {
 			description: terminalStrings.newWithCwd.value,
 			args: [{
 				name: 'args',
@@ -981,7 +981,7 @@ export function registerTerminalActions() {
 	registerActiveInstanceAction({
 		id: TerminalCommandId.RenameWithArgs,
 		title: terminalStrings.renameWithArgs,
-		description: {
+		metadata: {
 			description: terminalStrings.renameWithArgs.value,
 			args: [{
 				name: 'args',
@@ -1671,7 +1671,7 @@ export function refreshTerminalActions(detectedProfiles: ITerminalProfile[]) {
 				f1: true,
 				category,
 				precondition: ContextKeyExpr.or(TerminalContextKeys.processSupported, TerminalContextKeys.webExtensionContributedProfile),
-				description: {
+				metadata: {
 					description: TerminalCommandId.NewWithProfile,
 					args: [{
 						name: 'args',

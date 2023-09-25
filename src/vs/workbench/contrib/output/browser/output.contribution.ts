@@ -358,7 +358,7 @@ class OutputContribution extends Disposable implements IWorkbenchContribution {
 					menu: {
 						id: MenuId.CommandPalette,
 					},
-					description: {
+					metadata: {
 						description: 'workbench.action.openLogFile',
 						args: [{
 							name: 'logFile',

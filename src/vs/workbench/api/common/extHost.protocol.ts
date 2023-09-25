@@ -1542,7 +1542,7 @@ export interface MainThreadTimelineShape extends IDisposable {
 
 // -- extension host
 
-export interface ICommandHandlerDescriptionDto {
+export interface ICommandMetadataDto {
 	/**
 	 * NOTE: Please use an ILocalizedString. string is in the type for backcompat for now.
 	 * A short summary of what the command does. This will be used in:
@@ -1561,7 +1561,7 @@ export interface ICommandHandlerDescriptionDto {
 
 export interface ExtHostCommandsShape {
 	$executeContributedCommand(id: string, ...args: any[]): Promise<unknown>;
-	$getContributedCommandHandlerDescriptions(): Promise<{ [id: string]: string | ICommandHandlerDescriptionDto }>;
+	$getContributedCommandMetadata(): Promise<{ [id: string]: string | ICommandMetadataDto }>;
 }
 
 export interface ExtHostConfigurationShape {

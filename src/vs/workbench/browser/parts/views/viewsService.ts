@@ -503,7 +503,7 @@ export class ViewsService extends Disposable implements IViewsService {
 						mac: viewDescriptor.focusCommand?.keybindings?.mac,
 						win: viewDescriptor.focusCommand?.keybindings?.win
 					},
-					description: {
+					metadata: {
 						description: title,
 						args: [
 							{
