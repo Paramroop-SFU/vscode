@@ -21,11 +21,11 @@ import { ISignService } from 'vs/platform/sign/common/sign';
 import { AbstractTunnelService, ISharedTunnelsService, ITunnelProvider, ITunnelService, RemoteTunnel, TunnelPrivacyId, isAllInterfaces, isLocalhost, isPortPrivileged, isTunnelProvider } from 'vs/platform/tunnel/common/tunnel';
 import { VSBuffer } from 'vs/base/common/buffer';
 
-async function createRemoteTunnel(options: IConnectionOptions, defaultTunnelHost: string, tunnelRemoteHost: string, tunnelRemotePort: number, tunnelLocalPort?: number): Promise<RemoteTunnel> {
+async function createRemoteTunnel(logService: ILogService, options: IConnectionOptions, defaultTunnelHost: string, tunnelRemoteHost: string, tunnelRemotePort: number, tunnelLocalPort?: number): Promise<RemoteTunnel> {
 	let readyTunnel: NodeRemoteTunnel | undefined;
 	for (let attempts = 3; attempts; attempts--) {
 		readyTunnel?.dispose();
-		const tunnel = new NodeRemoteTunnel(options, defaultTunnelHost, tunnelRemoteHost, tunnelRemotePort, tunnelLocalPort);
+		const tunnel = new NodeRemoteTunnel(logService, options, defaultTunnelHost, tunnelRemoteHost, tunnelRemotePort, tunnelLocalPort);
 		readyTunnel = await tunnel.waitForReady();
 		if ((tunnelLocalPort && BROWSER_RESTRICTED_PORTS[tunnelLocalPort]) || !BROWSER_RESTRICTED_PORTS[readyTunnel.tunnelLocalPort]) {
 			break;
@@ -48,24 +48,33 @@ export class NodeRemoteTunnel extends Disposable implements RemoteTunnel {
 
 	private readonly _listeningListener: () => void;
 	private readonly _connectionListener: (socket: net.Socket) => void;
-	private readonly _errorListener: () => void;
+	private readonly _errorListener: (e: Error) => void;
 
 	private readonly _socketsDispose: Map<string, () => void> = new Map();
 
-	constructor(options: IConnectionOptions, private readonly defaultTunnelHost: string, tunnelRemoteHost: string, tunnelRemotePort: number, private readonly suggestedLocalPort?: number) {
+	constructor(private readonly logService: ILogService, options: IConnectionOptions, private readonly defaultTunnelHost: string, tunnelRemoteHost: string, tunnelRemotePort: number, private readonly suggestedLocalPort?: number) {
 		super();
 		this._options = options;
 		this._server = net.createServer();
 		this._barrier = new Barrier();
 
-		this._listeningListener = () => this._barrier.open();
+		this._listeningListener = () => {
+			const address = this._server.address();
+			this.logService.trace(`ForwardedPorts: (NodeRemoteTunnel) Listening on port ${(typeof address === 'string') ? address : address?.port}.`);
+			this._barrier.open();
+		};
 		this._server.on('listening', this._listeningListener);
 
-		this._connectionListener = (socket) => this._onConnection(socket);
+		this._connectionListener = (socket) => {
+			this.logService.trace(`ForwardedPorts: (NodeRemoteTunnel) Connected to local: ${socket.localPort}, remote ${socket.remotePort}.`);
+			this._onConnection(socket);
+		};
 		this._server.on('connection', this._connectionListener);
 
 		// If there is no error listener and there is an error it will crash the whole window
-		this._errorListener = () => { };
+		this._errorListener = (e) => {
+			this.logService.trace(`ForwardedPorts: (NodeRemoteTunnel) Error on server: ${e.message}.`);
+		};
 		this._server.on('error', this._errorListener);
 
 		this.tunnelRemotePort = tunnelRemotePort;
@@ -73,6 +82,8 @@ export class NodeRemoteTunnel extends Disposable implements RemoteTunnel {
 	}
 
 	public override async dispose(): Promise<void> {
+		this.logService.trace(`ForwardedPorts: (NodeRemoteTunnel) Disposing tunnel.`);
+
 		super.dispose();
 		this._server.removeListener('listening', this._listeningListener);
 		this._server.removeListener('connection', this._connectionListener);
@@ -89,12 +100,15 @@ export class NodeRemoteTunnel extends Disposable implements RemoteTunnel {
 		const hostname = isAllInterfaces(this.defaultTunnelHost) ? '0.0.0.0' : '127.0.0.1';
 		// try to get the same port number as the remote port number...
 		let localPort = await findFreePortFaster(startPort, 2, 1000, hostname);
+		this.logService.trace(`ForwardedPorts: (NodeRemoteTunnel) Found free port ${localPort} (from suggested port ${startPort} with host ${hostname}).`);
+
 
 		// if that fails, the method above returns 0, which works out fine below...
 		let address: string | net.AddressInfo | null = null;
 		this._server.listen(localPort, this.defaultTunnelHost);
 		await this._barrier.wait();
 		address = <net.AddressInfo>this._server.address();
+		this.logService.trace(`ForwardedPorts: (NodeRemoteTunnel) Server listening on port ${address?.port}.`);
 
 		// It is possible for findFreePortFaster to return a port that there is already a server listening on. This causes the previous listen call to error out.
 		if (!address) {
@@ -102,6 +116,7 @@ export class NodeRemoteTunnel extends Disposable implements RemoteTunnel {
 			this._server.listen(localPort, this.defaultTunnelHost);
 			await this._barrier.wait();
 			address = <net.AddressInfo>this._server.address();
+			this.logService.trace(`ForwardedPorts: (NodeRemoteTunnel) Server listening on port ${address?.port}.`);
 		}
 
 		this.tunnelLocalPort = address.port;
@@ -124,13 +139,20 @@ export class NodeRemoteTunnel extends Disposable implements RemoteTunnel {
 		}
 
 		localSocket.on('end', () => {
+			this.logService.trace(`ForwardedPorts: (NodeRemoteTunnel) on end localSocket.`);
+
 			if (localSocket.localAddress) {
 				this._socketsDispose.delete(localSocket.localAddress);
 			}
 			remoteSocket.end();
 		});
-		localSocket.on('close', () => remoteSocket.end());
-		localSocket.on('error', () => {
+		localSocket.on('close', () => {
+			this.logService.trace(`ForwardedPorts: (NodeRemoteTunnel) on close localSocket.`);
+			remoteSocket.end();
+		});
+		localSocket.on('error', (e) => {
+			this.logService.trace(`ForwardedPorts: (NodeRemoteTunnel) Error on localsocket: ${e.message}.`);
+
 			if (localSocket.localAddress) {
 				this._socketsDispose.delete(localSocket.localAddress);
 			}
@@ -149,6 +171,7 @@ export class NodeRemoteTunnel extends Disposable implements RemoteTunnel {
 
 		if (localSocket.localAddress) {
 			this._socketsDispose.set(localSocket.localAddress, () => {
+				this.logService.trace(`ForwardedPorts: (NodeRemoteTunnel) Ending sockets.`);
 				// Need to end instead of unpipe, otherwise whatever is connected locally could end up "stuck" with whatever state it had until manually exited.
 				localSocket.end();
 				remoteSocket.end();
@@ -166,14 +189,22 @@ export class NodeRemoteTunnel extends Disposable implements RemoteTunnel {
 
 	private _mirrorNodeSocket(localSocket: net.Socket, remoteNodeSocket: NodeSocket) {
 		const remoteSocket = remoteNodeSocket.socket;
-		remoteSocket.on('end', () => localSocket.end());
-		remoteSocket.on('close', () => localSocket.end());
-		remoteSocket.on('error', () => {
+		remoteSocket.on('end', () => {
+			this.logService.trace(`ForwardedPorts: (NodeRemoteTunnel) on end remoteSocket.`);
+			localSocket.end();
+		});
+		remoteSocket.on('close', () => {
+			this.logService.trace(`ForwardedPorts: (NodeRemoteTunnel) on close remoteSocket.`);
+			localSocket.end();
+		});
+		remoteSocket.on('error', (e) => {
+			this.logService.trace(`ForwardedPorts: (NodeRemoteTunnel) Error on remotesocket: ${e.message}.`);
 			localSocket.destroy();
 		});
 
-		remoteSocket.pipe(localSocket);
+		this.logService.trace(`ForwardedPorts: (NodeRemoteTunnel) Piping sockets.`);
 		localSocket.pipe(remoteSocket);
+		remoteSocket.pipe(localSocket);
 	}
 }
 
@@ -213,7 +244,7 @@ export class BaseTunnelService extends AbstractTunnelService {
 				ipcLogger: null
 			};
 
-			const tunnel = createRemoteTunnel(options, localHost, remoteHost, remotePort, localPort);
+			const tunnel = createRemoteTunnel(this.logService, options, localHost, remoteHost, remotePort, localPort);
 			this.logService.trace('ForwardedPorts: (TunnelService) Tunnel created without provider.');
 			this.addTunnelToMap(remoteHost, remotePort, tunnel);
 			return tunnel;

@@ -310,7 +310,7 @@ export class NodeExtHostTunnelService extends ExtHostTunnelService {
 
 	protected override makeManagedTunnelFactory(authority: vscode.ManagedResolvedAuthority): vscode.RemoteAuthorityResolver['tunnelFactory'] {
 		return async (tunnelOptions) => {
-			const t = new NodeRemoteTunnel(
+			const t = new NodeRemoteTunnel(this.logService,
 				{
 					commit: this.initData.commit,
 					quality: this.initData.quality,
